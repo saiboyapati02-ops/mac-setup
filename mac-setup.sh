@@ -43,7 +43,6 @@ FORMULAS=(
   git
   node
   python@3
-  openjdk@8
   poppler
   7zip
   gh
@@ -58,10 +57,17 @@ for formula in "${FORMULAS[@]}"; do
   fi
 done
 
-# Symlink Java 8 so system finds it
-if [[ -d "$(brew --prefix openjdk@8)/libexec/openjdk.jdk" ]]; then
-  sudo ln -sfn "$(brew --prefix openjdk@8)/libexec/openjdk.jdk" /Library/Java/JavaVirtualMachines/openjdk-8.jdk 2>/dev/null || true
-  log "Java 8 symlinked"
+# ---------------------------
+# 2b. Java 8 (Temurin - arm64 compatible)
+# ---------------------------
+# Note: openjdk@8 has no Apple Silicon build, so we use Eclipse Temurin 8
+# which works on both Intel and Apple Silicon Macs.
+log "Installing Java 8 (Eclipse Temurin)..."
+if ! brew list --cask temurin@8 &>/dev/null 2>&1 && ! /usr/libexec/java_home -v 1.8 &>/dev/null; then
+  log "Installing Temurin 8..."
+  brew install --cask temurin@8 || warn "Temurin 8 install failed - try: brew install --cask temurin@8"
+else
+  warn "Java 8 already installed"
 fi
 
 # Python packages for utility scripts (read_excel, read_pdfs equivalents)
@@ -149,7 +155,6 @@ if [[ -f "$SDKMANAGER" ]]; then
     "platform-tools" \
     "emulator" \
     "system-images;android-36;google_apis;arm64-v8a" \
-    "extras;google;Android_Emulator_Hypervisor_Driver" \
     2>/dev/null || warn "Some SDK packages may need manual install via Android Studio"
   log "SDK packages installed"
 
@@ -289,7 +294,7 @@ if ! grep -q "# == Mac Setup Script ==" "$ZSHRC"; then
   cat >> "$ZSHRC" << 'SHELL_CONFIG'
 
 # == Mac Setup Script ==
-# Java 8
+# Java 8 (Temurin)
 export JAVA_HOME=$(/usr/libexec/java_home -v 1.8 2>/dev/null || echo "")
 export PATH="$JAVA_HOME/bin:$PATH"
 
@@ -320,7 +325,6 @@ fi
 
 # ---------------------------
 # 9. ADB / Fastboot / MVS Testing Functions
-#    (replaces your PowerShell & CMD workflow)
 # ---------------------------
 log "Adding MVS device testing functions to .zshrc..."
 
@@ -329,11 +333,6 @@ if ! grep -q "$ZSHRC_MVS_MARKER" "$ZSHRC"; then
   cat >> "$ZSHRC" << 'MVS_TESTING'
 
 # == MVS Device Testing ==
-# =========================================================
-# Replaces: PowerShell/CMD ADB testing commands
-# Your Windows workflow → Mac zsh functions
-# =========================================================
-
 # --- Device Connection & Info ---
 alias adb-devices="adb devices -l"
 alias adb-restart="adb kill-server && adb start-server && echo 'ADB restarted' && adb devices -l"
@@ -346,7 +345,6 @@ alias mvs-clear='adb shell pm clear com.verizon.mips.services && echo "MVS data 
 alias mvs-uninstall='adb uninstall com.verizon.mips.services && echo "MVS uninstalled"'
 alias mvs-path='adb shell pm path com.verizon.mips.services'
 
-# Check other Verizon package versions
 alias apnlib-version='adb shell "dumpsys package com.vzw.apnlib | grep version"'
 alias ecid-version='adb shell "dumpsys package com.vzw.ecid | grep version"'
 alias myvzw-version='adb shell "dumpsys package com.vzw.hss.myverizon | grep version"'
@@ -354,12 +352,9 @@ alias sso-version='adb shell "dumpsys package com.verizon.mips.services | grep v
 alias vms-version='adb shell "dumpsys package com.securityandprivacy.android.verizon.vms | grep version"'
 alias tracfone-version='adb shell "dumpsys package com.tracfone.preload.accountservices | grep version"'
 
-# Install MVS APK
 mvs-install() {
   if [[ -z "$1" ]]; then
     echo "Usage: mvs-install <path-to-apk>"
-    echo "  Example: mvs-install ~/MVS\\ Apk\\'s/MVS_1.0.246.0_preprod.apk"
-    echo ""
     echo "Available APKs in ~/MVS Apk's/:"
     ls -1 "$HOME/MVS Apk's/"*.apk 2>/dev/null || echo "  (none found)"
     return 1
@@ -370,11 +365,9 @@ mvs-install() {
   mvs-version
 }
 
-# Install any test APK
 apk-install() {
   if [[ -z "$1" ]]; then
     echo "Usage: apk-install <path-to-apk>"
-    echo ""
     echo "Available APKs in ~/Test Apk's/:"
     ls -1 "$HOME/Test Apk's/"*.apk 2>/dev/null || echo "  (none found)"
     return 1
@@ -382,10 +375,7 @@ apk-install() {
   adb install -r -d "$1"
 }
 
-# --- MVS Broadcast/Trigger ---
 alias mvs-trigger='adb shell am broadcast -a com.verizon.mvsi.intent.action.COLLECT_AND_PUBLISH com.verizon.mips.services && echo "MVS collect & publish triggered"'
-
-# --- Radio Info ---
 alias radio-info='adb shell am start -n com.android.phone/com.android.phone.settings.RadioInfo'
 
 # --- Logging ---
@@ -406,7 +396,6 @@ log-save() {
   echo "Saved: $logfile ($(wc -l < "$logfile") lines)"
 }
 
-# --- Bugreport ---
 bugreport() {
   local outfile="$HOME/bugreports/bugreport_$(date +%Y%m%d_%H%M%S).zip"
   echo "Collecting bugreport (this takes a few minutes)..."
@@ -434,21 +423,20 @@ alias data-on="adb shell svc data enable && echo 'Mobile data ON'"
 alias data-off="adb shell svc data disable && echo 'Mobile data OFF'"
 alias wifi-only="adb shell svc wifi enable && adb shell svc data disable && echo 'WiFi-only mode'"
 
-# --- Screenshot / Screen Record ---
+# --- Screenshot / Record ---
 alias adb-screenshot='adb exec-out screencap -p > "$HOME/Desktop/screenshot_$(date +%Y%m%d_%H%M%S).png" && echo "Screenshot saved to Desktop"'
 alias adb-record="adb shell screenrecord /sdcard/recording.mp4 && echo 'Recording... Ctrl+C to stop'"
 alias adb-pull-record='adb pull /sdcard/recording.mp4 "$HOME/Desktop/recording_$(date +%Y%m%d_%H%M%S).mp4"'
 
-# --- Device Battery & Network ---
+# --- Battery & Network ---
 alias adb-battery="adb shell dumpsys battery"
 alias adb-ip="adb shell ip route | awk '{print \$9}'"
-alias adb-sim='adb shell "service call iphonesubinfo 1" 2>/dev/null; adb shell getprop gsm.sim.operator.numeric'
+alias adb-sim='adb shell getprop gsm.sim.operator.numeric'
 
-# --- Wireless Debugging (Android 11+) ---
+# --- Wireless Debugging ---
 adb-pair() {
   if [[ -z "$1" || -z "$2" ]]; then
     echo "Usage: adb-pair <ip:port> <pairing-code>"
-    echo "  (Find in: Settings > Developer Options > Wireless Debugging > Pair)"
     return 1
   fi
   adb pair "$1" "$2"
@@ -462,7 +450,7 @@ adb-connect() {
   adb connect "$1"
 }
 
-# --- Emulator Shortcuts ---
+# --- Emulator ---
 alias emu-list="$HOME/Library/Android/sdk/emulator/emulator -list-avds"
 alias emu-start="$HOME/Library/Android/sdk/emulator/emulator -avd"
 alias emu-cold="$HOME/Library/Android/sdk/emulator/emulator -avd Pixel_7_API_36 -no-snapshot-load"
@@ -491,19 +479,11 @@ device-status() {
   echo "--- MVS Version ---"
   adb shell "dumpsys package com.verizon.mips.services | grep versionName" 2>/dev/null || echo "  MVS not installed"
   echo ""
-  echo "--- APNLib Version ---"
-  adb shell "dumpsys package com.vzw.apnlib | grep versionName" 2>/dev/null || echo "  APNLib not installed"
-  echo ""
   echo "--- Battery ---"
   adb shell dumpsys battery 2>/dev/null | grep -E "level|status|temperature"
-  echo ""
-  echo "--- Network ---"
-  echo "WiFi: $(adb shell dumpsys wifi 2>/dev/null | grep 'Wi-Fi is' | head -1)"
-  echo "Data: $(adb shell settings get global mobile_data 2>/dev/null)"
   echo "============================================"
 }
 
-# --- All Verizon Package Versions ---
 vzw-versions() {
   echo "=== Verizon Package Versions ==="
   echo "MVS:      $(adb shell dumpsys package com.verizon.mips.services 2>/dev/null | grep versionName | head -1)"
@@ -515,7 +495,6 @@ vzw-versions() {
   echo "================================"
 }
 
-# --- NW Lock Testing ---
 nwlock-install-qcom() {
   local apk="${1:-$HOME/Test Apk's/NWLock_POC_v302_preprod.apk}"
   echo "Installing NWLock POC (QCOM): $apk"
@@ -536,8 +515,7 @@ else
 fi
 
 # ---------------------------
-# 10. AVS WiFi Test Script (Mac version)
-#     Replaces: C:\platform-tools\avs_wifi_test.bat
+# 10. AVS WiFi Test Script
 # ---------------------------
 log "Creating AVS WiFi test script..."
 
@@ -545,12 +523,6 @@ AVS_SCRIPT="$HOME/AVS_AUTO/avs_wifi_test.sh"
 if [[ ! -f "$AVS_SCRIPT" ]]; then
   cat > "$AVS_SCRIPT" << 'AVS_SCRIPT_CONTENT'
 #!/bin/bash
-# =============================================================
-# AVS WiFi-only Automated Test (Mac version)
-# Replaces: C:\platform-tools\avs_wifi_test.bat
-# Usage: ./avs_wifi_test.sh
-# =============================================================
-
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
@@ -563,73 +535,57 @@ REQ_FILE="$LOGDIR/avs_request.txt"
 RES_FILE="$LOGDIR/avs_response.txt"
 
 echo "===== AVS WiFi-only Automated Test ====="
-echo ""
-
-# 0. Check device connection
 echo -e "${YELLOW}[STEP]${NC} Checking device connection..."
 DEVICE_COUNT=$(adb devices | grep -c -E "device$")
 if [[ "$DEVICE_COUNT" -eq 0 ]]; then
-  echo -e "${RED}[FAIL]${NC} No device connected. Connect a device and retry."
+  echo -e "${RED}[FAIL]${NC} No device connected."
   exit 1
 fi
 adb devices -l
 
-# 1. Clear old logs
 echo -e "${YELLOW}[STEP]${NC} Clearing previous logcat buffer..."
 adb logcat -c
 
-# 2. Reboot device
 echo -e "${YELLOW}[STEP]${NC} Rebooting device..."
 adb reboot
 
-# 3. Wait until device is back online
-echo -e "${YELLOW}[STEP]${NC} Waiting for device to come online..."
+echo -e "${YELLOW}[STEP]${NC} Waiting for device..."
 adb wait-for-device
 
-# Extra wait for Android services to finish starting
-echo -e "${YELLOW}[STEP]${NC} Giving device 60 seconds to fully boot..."
+echo -e "${YELLOW}[STEP]${NC} Giving device 60 seconds to boot..."
 sleep 60
 
-# 4. Force WiFi ON and mobile data OFF (WiFi-only mode)
-echo -e "${YELLOW}[STEP]${NC} Forcing WiFi ON and mobile data OFF..."
+echo -e "${YELLOW}[STEP]${NC} Forcing WiFi ON and data OFF..."
 adb shell svc wifi enable
 adb shell svc data disable
 
-# Give WiFi time to connect
-echo -e "${YELLOW}[STEP]${NC} Waiting 20 seconds for WiFi connection..."
+echo -e "${YELLOW}[STEP]${NC} Waiting 20 seconds for WiFi..."
 sleep 20
 
-# 5. Dump logs for AVS tag
-echo -e "${YELLOW}[STEP]${NC} Dumping logs for tag $TAG..."
+echo -e "${YELLOW}[STEP]${NC} Dumping logs for $TAG..."
 adb logcat -d -v time "$TAG:D" "*:S" > "$LOG_FILE"
 
-echo -e "${YELLOW}[STEP]${NC} Filtering Request and Response lines..."
 grep -i "Request" "$LOG_FILE" > "$REQ_FILE" 2>/dev/null || true
 grep -i "Response" "$LOG_FILE" > "$RES_FILE" 2>/dev/null || true
 
-# 6. PASS/FAIL evaluation
 echo ""
 echo "===== RESULT ====="
-
 if [[ -s "$REQ_FILE" ]]; then
-  REQ_COUNT=$(wc -l < "$REQ_FILE")
-  echo -e "${GREEN}[OK]${NC}   $REQ_COUNT Request log(s) found"
+  echo -e "${GREEN}[OK]${NC}   $(wc -l < "$REQ_FILE") Request log(s) found"
 else
   echo -e "${RED}[FAIL]${NC} No Request log found"
 fi
 
 if [[ -s "$RES_FILE" ]]; then
-  RES_COUNT=$(wc -l < "$RES_FILE")
-  echo -e "${GREEN}[OK]${NC}   $RES_COUNT Response log(s) found"
+  echo -e "${GREEN}[OK]${NC}   $(wc -l < "$RES_FILE") Response log(s) found"
 else
   echo -e "${RED}[FAIL]${NC} No Response log found"
 fi
 
 echo ""
 echo "Full logs:      $LOG_FILE"
-echo "Request lines:  $REQ_FILE ($(wc -l < "$REQ_FILE" 2>/dev/null || echo 0) lines)"
-echo "Response lines: $RES_FILE ($(wc -l < "$RES_FILE" 2>/dev/null || echo 0) lines)"
-echo "============================="
+echo "Request lines:  $REQ_FILE"
+echo "Response lines: $RES_FILE"
 AVS_SCRIPT_CONTENT
   chmod +x "$AVS_SCRIPT"
   log "AVS WiFi test script created at $AVS_SCRIPT"
@@ -638,96 +594,21 @@ else
 fi
 
 # ---------------------------
-# 11. Quick-Reference Cheat Sheet
-# ---------------------------
-log "Creating testing cheat sheet..."
-
-CHEATSHEET="$HOME/testing-cheatsheet.txt"
-cat > "$CHEATSHEET" << 'CHEAT'
-=============================================================
-  MVS DEVICE TESTING — MAC CHEAT SHEET
-  (Windows PowerShell/CMD → Mac Terminal equivalents)
-=============================================================
-
-WINDOWS COMMAND                          → MAC EQUIVALENT
-─────────────────────────────────────────────────────────────
-adb devices                              → adb-devices
-adb shell dumpsys package                → mvs-version / vzw-versions
-  com.verizon.mips.services | grep ver
-adb install -r -d "C:\MVS.apk"          → mvs-install ~/MVS\ Apk\'s/file.apk
-adb shell pm clear                       → mvs-clear
-  com.verizon.mips.services
-adb uninstall                            → mvs-uninstall
-  com.verizon.mips.services
-adb shell am broadcast -a                → mvs-trigger
-  com.verizon.mvsi.intent...
-adb shell am start -am                   → radio-info
-  com.android.phone/...RadioInfo
-adb bugreport                            → bugreport
-adb logcat > file.txt                    → log-save
-adb logcat -c                            → adb-logcat-clear
-adb reboot                               → adb-reboot
-adb reboot bootloader                    → adb-bootloader
-fastboot oem config bootmode factory     → fb-factory
-fastboot devices                         → fb-devices
-fastboot reboot                          → fb-reboot
-fastboot oem device-info                 → fb-device-info
-adb shell svc wifi enable                → wifi-on
-adb shell svc data disable               → data-off
-(WiFi + data off combo)                  → wifi-only
-avs_wifi_test.bat                        → ~/AVS_AUTO/avs_wifi_test.sh
-(check all Verizon packages)             → vzw-versions
-(full device report)                     → device-status
-
-TESTING FOLDERS:
-  ~/MVS Apk's/          — MVS APK builds (preprod, release, dev)
-  ~/Test Apk's/         — NWLock, SSO, APNLib, GameBooster, etc.
-  ~/AVS_AUTO/           — AVS WiFi test script + logs
-  ~/testing-logs/       — Logcat dumps
-  ~/bugreports/         — Bug reports
-
-WORKFLOW EXAMPLE:
-  1. adb-devices                    # verify device connected
-  2. device-status                  # full device report
-  3. mvs-install ~/MVS\ Apk\'s/MVS_1.0.246.0_preprod.apk
-  4. mvs-version                    # verify installed version
-  5. mvs-trigger                    # trigger collect & publish
-  6. mvs-logcat                     # watch AVS logs
-  7. bugreport                      # collect bugreport if needed
-
-NW LOCK TESTING:
-  nwlock-install-qcom               # QCOM variant
-  nwlock-install-mtk                # MediaTek variant
-
-DRIVERS NOTE:
-  macOS does NOT need Motorola/Qualcomm/MediaTek USB drivers.
-  Just enable USB Debugging on the phone and trust the Mac
-  when prompted. All chipset variants work natively.
-=============================================================
-CHEAT
-log "Cheat sheet saved to $CHEATSHEET"
-
-# ---------------------------
-# 12. Summary
+# 11. Summary
 # ---------------------------
 echo ""
 echo "==========================================="
-log "Setup complete! Installed:"
+log "Setup complete!"
 echo "==========================================="
-echo "  Dev:       git, node $(node -v 2>/dev/null), python3, java 8, poppler, gh"
-echo "  IDEs:      Android Studio, IntelliJ IDEA, PyCharm, JetBrains Toolbox"
-echo "  Browsers:  Chrome, Firefox, Safari (built-in)"
+echo "  Dev:       git, node, python3, java 8 (Temurin), poppler, gh"
+echo "  IDEs:      Android Studio, IntelliJ, PyCharm, JetBrains Toolbox"
+echo "  Browsers:  Chrome, Firefox, Safari"
 echo "  AI:        Claude Desktop, ChatGPT, claude-code CLI"
-echo "  Android:   SDK 35+36, build-tools 34-36, ADB, fastboot, emulator, AVD"
-echo "  Testing:   MVS aliases, AVS WiFi test, device-status, vzw-versions"
+echo "  Android:   SDK 35+36, build-tools, ADB, fastboot, emulator, AVD"
+echo "  Testing:   MVS aliases, AVS WiFi test, device-status"
 echo "  Utils:     AnyDesk, Vysor, 7zip, pm2"
 echo "  Office:    Microsoft 365, Teams"
-echo "  Python:    openpyxl, pandas, PyPDF2, pdfplumber"
 echo "==========================================="
-echo ""
-echo "  Testing folders created:"
-echo "    ~/MVS Apk's/    ~/Test Apk's/    ~/AVS_AUTO/"
-echo "    ~/testing-logs/  ~/bugreports/"
 echo ""
 warn "Next steps:"
 echo "  1. Restart terminal: source ~/.zshrc"
@@ -735,10 +616,8 @@ echo "  2. Open Android Studio once to finish IDE setup"
 echo "  3. Connect phone via USB → adb-devices"
 echo "  4. Full device report   → device-status"
 echo "  5. Run AVS WiFi test    → ~/AVS_AUTO/avs_wifi_test.sh"
-echo "  6. See cheat sheet      → cat ~/testing-cheatsheet.txt"
-echo "  7. Run 'gh auth login' for GitHub CLI"
-echo "  8. Run 'claude' to set up Claude Code"
+echo "  6. Run 'gh auth login' for GitHub CLI"
+echo "  7. Run 'claude' to set up Claude Code"
 echo ""
 echo "  TIP: No Motorola/Qualcomm/MediaTek drivers needed on Mac!"
-echo "  Just enable USB Debugging and trust the Mac when prompted."
 echo ""
